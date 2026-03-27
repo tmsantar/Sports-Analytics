@@ -42,4 +42,4 @@ This app allows users to compare the different ratings and combine statistics of
 st.markdown("---")
 
 # Final note encouraging users to explore the app
-st.info("👈 Use the sidebar to navigate between pages and start exploring the data!")
+st.info("👈 Use the sidebar to navigate between pages and start exploring the data!") 
