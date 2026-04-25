@@ -26,6 +26,10 @@ DEFAULT_ROBOFLOW_API_KEY = os.environ.get("ROBOFLOW_API_KEY", "YYrmkzwSLYTs1DUgR
 MAX_DETECTION_FRAMES = 90  # Maximum frames to scan for QB detection
 MIN_BBOX_AREA = 500  # Minimum bounding box area to avoid noise detections
 MAX_PLAUSIBLE_SPEED_MPH = 30.0  # Maximum realistic speed for filtering unreliable estimates
+MAX_TRACKER_CENTER_JUMP_FRAC = 0.10  # Reject jumps larger than 10% of frame diagonal
+MIN_TRACKER_AREA_RATIO = 0.35  # Reject boxes that shrink too abruptly
+MAX_TRACKER_AREA_RATIO = 2.75  # Reject boxes that grow too abruptly
+MAX_TRACKER_OFF_FRAME_FRAC = 0.25  # Reject boxes that are mostly off-screen
 
 # Sidebar configuration section
 st.sidebar.header("Configuration")
@@ -509,6 +513,59 @@ def draw_target(frame, target, bbox=None, class_colors=None):
     return frame
 
 
+def bbox_center(bbox):
+    """Return center point for a bounding box."""
+    x, y, w, h = bbox
+    return (x + w / 2, y + h / 2)
+
+
+def bbox_area(bbox):
+    """Return nonzero area for a bounding box."""
+    return max(1, bbox[2] * bbox[3])
+
+
+def off_frame_fraction(bbox, frame_shape):
+    """Calculate what fraction of a bbox is outside the visible frame."""
+    frame_h, frame_w = frame_shape[:2]
+    x, y, w, h = bbox
+    x2 = x + w
+    y2 = y + h
+    inside_w = max(0, min(x2, frame_w) - max(x, 0))
+    inside_h = max(0, min(y2, frame_h) - max(y, 0))
+    inside_area = inside_w * inside_h
+    return 1 - (inside_area / bbox_area(bbox))
+
+
+def validate_tracker_bbox(bbox, previous_bbox, frame_shape):
+    """
+    Reject tracker updates that are technically successful but visually implausible.
+    This prevents the app from drawing a confident box after the tracker drifts.
+    """
+    if bbox is None:
+        return False, "tracker_failed"
+
+    x, y, w, h = bbox
+    if w <= 0 or h <= 0 or w * h < MIN_BBOX_AREA:
+        return False, "invalid_box_size"
+
+    frame_h, frame_w = frame_shape[:2]
+    frame_diag = math.sqrt(frame_w ** 2 + frame_h ** 2)
+    max_center_jump = max(80, frame_diag * MAX_TRACKER_CENTER_JUMP_FRAC)
+    center_jump = math.dist(bbox_center(bbox), bbox_center(previous_bbox))
+    if center_jump > max_center_jump:
+        return False, f"large_jump_{center_jump:.0f}px"
+
+    area_ratio = bbox_area(bbox) / bbox_area(previous_bbox)
+    if area_ratio < MIN_TRACKER_AREA_RATIO or area_ratio > MAX_TRACKER_AREA_RATIO:
+        return False, f"area_change_{area_ratio:.2f}x"
+
+    offscreen = off_frame_fraction(bbox, frame_shape)
+    if offscreen > MAX_TRACKER_OFF_FRAME_FRAC:
+        return False, f"off_screen_{offscreen:.0%}"
+
+    return True, "tracking"
+
+
 def get_ffmpeg_exe():
     """
     Find the FFmpeg executable for video processing.
@@ -573,7 +630,7 @@ def browser_ready_video(input_path):
     return input_path
 
 
-def build_tracking_metadata(positions, tracking_lost_frames, total_frames, fps, target, pixels_per_yard):
+def build_tracking_metadata(positions, tracking_lost_frames, total_frames, fps, target, pixels_per_yard, tracking_lost_reasons=None):
     """
     Calculate and compile tracking analytics and metadata.
     Computes distance traveled, speed metrics, and converts to real-world units if calibrated.
@@ -590,6 +647,7 @@ def build_tracking_metadata(positions, tracking_lost_frames, total_frames, fps, 
         dict: Dictionary containing tracking statistics and metadata
     """
     df = pd.DataFrame(positions)
+    tracking_lost_reasons = tracking_lost_reasons or []
     target_label = f"ID:{target['id']} {target['class']}"
     has_calibration = pixels_per_yard is not None and pixels_per_yard > 0
     if df.empty:
@@ -673,6 +731,13 @@ def build_tracking_metadata(positions, tracking_lost_frames, total_frames, fps, 
     return df, summary
 
 
+def build_lost_tracking_table(tracking_lost_reasons):
+    """Build a table of frames where tracking was rejected or failed."""
+    if not tracking_lost_reasons:
+        return pd.DataFrame(columns=["frame", "reason"])
+    return pd.DataFrame(tracking_lost_reasons)
+
+
 show_field_calibration(video_path, known_calibration_yards)
 pixels_per_yard = st.session_state.get("pixels_per_yard")
 
@@ -740,8 +805,10 @@ if api_key and video_path:
                             else:
                                 tracker = create_tracker()
                                 tracker.init(first_frame, target["bbox"])
+                                last_good_bbox = target["bbox"]
                                 tracked_positions = []
                                 tracking_lost_frames = []
+                                tracking_lost_reasons = []
 
                                 x, y, w, h = target["bbox"]
                                 tracked_positions.append({
@@ -761,17 +828,44 @@ if api_key and video_path:
                                     success, bbox = tracker.update(frame)
                                     if success:
                                         x, y, w, h = [int(v) for v in bbox]
-                                        tracked_positions.append({
-                                            "frame": frame_num,
-                                            "target_id": target["id"],
-                                            "target_class": target["class"],
-                                            "center_x": x + w / 2,
-                                            "center_y": y + h / 2,
-                                        })
-                                        draw_target(frame, target, (x, y, w, h), class_colors=class_colors)
+                                        validated_bbox = (x, y, w, h)
+                                        bbox_is_valid, lost_reason = validate_tracker_bbox(
+                                            validated_bbox,
+                                            last_good_bbox,
+                                            frame.shape,
+                                        )
+                                        if bbox_is_valid:
+                                            last_good_bbox = validated_bbox
+                                            tracked_positions.append({
+                                                "frame": frame_num,
+                                                "target_id": target["id"],
+                                                "target_class": target["class"],
+                                                "center_x": x + w / 2,
+                                                "center_y": y + h / 2,
+                                            })
+                                            draw_target(frame, target, validated_bbox, class_colors=class_colors)
+                                        else:
+                                            tracking_lost_frames.append(frame_num)
+                                            tracking_lost_reasons.append({
+                                                "frame": frame_num,
+                                                "reason": lost_reason,
+                                            })
+                                            cv2.putText(
+                                                frame,
+                                                f"Tracking lost: {lost_reason}",
+                                                (50, 50),
+                                                cv2.FONT_HERSHEY_SIMPLEX,
+                                                0.9,
+                                                (0, 0, 255),
+                                                2,
+                                            )
                                     else:
                                         tracking_lost_frames.append(frame_num)
-                                        cv2.putText(frame, "Tracking lost", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
+                                        tracking_lost_reasons.append({
+                                            "frame": frame_num,
+                                            "reason": "tracker_failed",
+                                        })
+                                        cv2.putText(frame, "Tracking lost: tracker_failed", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
                                     out.write(frame)
                                     frame_num += 1
 
@@ -800,7 +894,9 @@ if api_key and video_path:
                                     fps,
                                     target,
                                     pixels_per_yard,
+                                    tracking_lost_reasons,
                                 )
+                                lost_tracking_df = build_lost_tracking_table(tracking_lost_reasons)
                                 st.subheader(f"Tracking Data: ID:{target['id']} {target['class']}")
                                 if pixels_per_yard:
                                     st.warning(
@@ -816,12 +912,22 @@ if api_key and video_path:
                                     )
                                 )
                                 st.dataframe(metadata_df, use_container_width=True)
+                                if not lost_tracking_df.empty:
+                                    st.write("### Rejected / Lost Tracking Frames")
+                                    st.dataframe(lost_tracking_df, use_container_width=True)
                                 st.download_button(
                                     "Save tracking data CSV",
                                     data=metadata_df.to_csv(index=False).encode("utf-8"),
                                     file_name=f"tommy_tracking_id_{target['id']}_metadata.csv",
                                     mime="text/csv",
                                 )
+                                if not lost_tracking_df.empty:
+                                    st.download_button(
+                                        "Save lost tracking frames CSV",
+                                        data=lost_tracking_df.to_csv(index=False).encode("utf-8"),
+                                        file_name=f"tommy_tracking_id_{target['id']}_lost_frames.csv",
+                                        mime="text/csv",
+                                    )
                                 st.success("Video tracking completed!")
 else:
     if run_tracking or show_frame:
