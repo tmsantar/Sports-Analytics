@@ -1,0 +1,8 @@
+streamlit
+roboflow
+opencv-contrib-python-headless
+numpy
+pandas
+Pillow
+imageio-ffmpeg
+streamlit-image-coordinates
