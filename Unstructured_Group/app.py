@@ -715,7 +715,6 @@ def build_tracking_metadata(positions, tracking_lost_frames, total_frames, fps, 
         else:
             summary["Real-world values"] = "Estimates from clicked field calibration"
         summary["Pixels per yard calibration"] = f"{pixels_per_yard:.1f}"
-        summary["Plausible speed limit used"] = f"{MAX_PLAUSIBLE_SPEED_MPH:.0f} mph"
         summary["Estimated total distance"] = f"{df['estimated_distance_yards'].sum():.1f} yd"
         summary["Estimated max speed"] = (
             f"Unreliable ({max_estimated_speed:.1f} mph spike)"
