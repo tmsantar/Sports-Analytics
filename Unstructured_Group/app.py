@@ -318,6 +318,12 @@ def annotate_detections(frame, detections):
     return display, class_colors
 
 
+def image_to_png_bytes(rgb_image):
+    """Encode an RGB image array as PNG bytes for download."""
+    success, encoded = cv2.imencode(".png", cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR))
+    return encoded.tobytes() if success else None
+
+
 def build_detections(results, min_conf):
     """
     Parse Roboflow inference results into a standardized detection format.
@@ -441,6 +447,14 @@ def show_preview_for_choice(model, video_path, track_mode, confidence_threshold)
     annotated = cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB)
     caption = "ID preview of the first frame" if show_ids else "Labeled position preview of the first frame"
     st.image(annotated, channels="RGB", caption=caption)
+    png_bytes = image_to_png_bytes(annotated)
+    if png_bytes:
+        st.download_button(
+            "Save labeled image",
+            data=png_bytes,
+            file_name="tommy_labeled_preview.png",
+            mime="image/png",
+        )
     show_detected_table(detections, show_ids=show_ids)
     if show_ids:
         st.write("Use the ID list above to select a Target ID for specific tracking.")
@@ -756,6 +770,14 @@ if api_key and video_path:
             annotated = cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB)
             caption = "ID preview of the first frame" if show_ids else "Labeled position preview of the first frame"
             st.image(annotated, channels="RGB", caption=caption)
+            png_bytes = image_to_png_bytes(annotated)
+            if png_bytes:
+                st.download_button(
+                    "Save labeled image",
+                    data=png_bytes,
+                    file_name="tommy_labeled_preview.png",
+                    mime="image/png",
+                )
             show_detected_table(detections, show_ids=show_ids)
             if show_ids:
                 st.write("Use the ID list above to select a Target ID for specific tracking.")
@@ -941,4 +963,6 @@ st.markdown("""
 5. If using specific ID, type the ID shown in the Detected players list.
 6. Use field calibration if you want rough yards/MPH estimates.
 7. Click "Run video tracking" to generate the tracked video.
+
+**Testing note:** This app is still being tested and improved. The tracking, calibration, and speed estimates are experimental and still have a long way to go.
 """)
