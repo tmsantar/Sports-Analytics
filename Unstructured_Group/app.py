@@ -11,8 +11,8 @@ import sys
 import tempfile
 from PIL import Image
 
-st.set_page_config(page_title="Roboflow Football Tracker", layout="wide")
-st.title("Roboflow Football Tracker")
+st.set_page_config(page_title="Roboflow Football Player Tracker", layout="wide")
+st.title("Roboflow Football Player Tracker")
 
 ROBOFLOW_WORKSPACE = "tommys-workspace-vmucs"
 ROBOFLOW_PROJECT = "rishi-fohsb-fdsoi"
