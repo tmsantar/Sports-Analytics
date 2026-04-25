@@ -21,6 +21,7 @@ ROBOFLOW_MODEL_ID = f"{ROBOFLOW_PROJECT}/{ROBOFLOW_VERSION}"
 DEFAULT_ROBOFLOW_API_KEY = os.environ.get("ROBOFLOW_API_KEY", "YYrmkzwSLYTs1DUgRxed")
 MAX_DETECTION_FRAMES = 90
 MIN_BBOX_AREA = 500
+MAX_PLAUSIBLE_SPEED_MPH = 30.0
 
 
 st.sidebar.header("Configuration")
@@ -459,11 +460,34 @@ def build_tracking_metadata(positions, tracking_lost_frames, total_frames, fps, 
         df["estimated_distance_yards"] = df["distance"] / pixels_per_yard
         df["estimated_speed_yards_per_sec"] = df["speed_px_per_sec"] / pixels_per_yard
         df["estimated_speed_mph"] = df["estimated_speed_yards_per_sec"] * 2.04545
-        summary["Real-world values"] = "Estimates from clicked field calibration"
+        df["estimated_speed_flag"] = np.where(
+            df["estimated_speed_mph"] > MAX_PLAUSIBLE_SPEED_MPH,
+            "unreliable",
+            "ok",
+        )
+        reliable_speed_df = df[df["estimated_speed_flag"] == "ok"]
+        max_estimated_speed = df["estimated_speed_mph"].max()
+        avg_estimated_speed = reliable_speed_df["estimated_speed_mph"].mean() if not reliable_speed_df.empty else np.nan
+
+        if max_estimated_speed > MAX_PLAUSIBLE_SPEED_MPH:
+            summary["Real-world values"] = (
+                "Calibration produced implausible speed spikes; MPH should be treated as unreliable"
+            )
+        else:
+            summary["Real-world values"] = "Estimates from clicked field calibration"
         summary["Pixels per yard calibration"] = f"{pixels_per_yard:.1f}"
+        summary["Plausible speed limit used"] = f"{MAX_PLAUSIBLE_SPEED_MPH:.0f} mph"
         summary["Estimated total distance"] = f"{df['estimated_distance_yards'].sum():.1f} yd"
-        summary["Estimated max speed"] = f"{df['estimated_speed_mph'].max():.1f} mph"
-        summary["Estimated avg speed"] = f"{df['estimated_speed_mph'].mean():.1f} mph"
+        summary["Estimated max speed"] = (
+            f"Unreliable ({max_estimated_speed:.1f} mph spike)"
+            if max_estimated_speed > MAX_PLAUSIBLE_SPEED_MPH
+            else f"{max_estimated_speed:.1f} mph"
+        )
+        summary["Estimated avg speed"] = (
+            "Unreliable"
+            if np.isnan(avg_estimated_speed)
+            else f"{avg_estimated_speed:.1f} mph from plausible frames"
+        )
 
     return df, summary
 
@@ -600,7 +624,8 @@ if api_key and video_path:
                                 if pixels_per_yard:
                                     st.warning(
                                         "Yards and MPH are rough estimates from the clicked field calibration. "
-                                        "They are not exact player tracking measurements."
+                                        "They are not exact player tracking measurements. "
+                                        "Speed spikes above 30 mph are marked unreliable."
                                     )
                                 else:
                                     st.info("Complete field calibration above to add estimated yards and MPH.")
