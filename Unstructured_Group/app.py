@@ -11,27 +11,36 @@ import sys
 import tempfile
 from PIL import Image
 
+# Configure the Streamlit app page
 st.set_page_config(page_title="Roboflow Football Player Tracker", layout="wide")
 st.title("Roboflow Football Player Tracker")
 
+# Roboflow project configuration constants
 ROBOFLOW_WORKSPACE = "tommys-workspace-vmucs"
 ROBOFLOW_PROJECT = "rishi-fohsb-fdsoi"
 ROBOFLOW_VERSION = 1
 ROBOFLOW_MODEL_ID = f"{ROBOFLOW_PROJECT}/{ROBOFLOW_VERSION}"
 DEFAULT_ROBOFLOW_API_KEY = os.environ.get("ROBOFLOW_API_KEY", "YYrmkzwSLYTs1DUgRxed")
-MAX_DETECTION_FRAMES = 90
-MIN_BBOX_AREA = 500
-MAX_PLAUSIBLE_SPEED_MPH = 30.0
 
+# Tracking configuration constants
+MAX_DETECTION_FRAMES = 90  # Maximum frames to scan for QB detection
+MIN_BBOX_AREA = 500  # Minimum bounding box area to avoid noise detections
+MAX_PLAUSIBLE_SPEED_MPH = 30.0  # Maximum realistic speed for filtering unreliable estimates
 
+# Sidebar configuration section
 st.sidebar.header("Configuration")
+
+# API key setup - uses saved key by default
 api_key = "YYrmkzwSLYTs1DUgRxed"
 st.sidebar.success("Using saved Roboflow API key")
 if st.sidebar.checkbox("Use a different Roboflow API key"):
     api_key = st.sidebar.text_input("Roboflow API Key", type="password")
+
+# Tracking mode selection
 track_mode = st.sidebar.radio("Track mode", ["Track QB", "Track Specific ID"])
 track_id = ""
 if track_mode == "Track Specific ID":
+    # Get preview detections from session state to populate dropdown
     preview_detections = st.session_state.get("preview_detections", [])
     preview_ids = [str(det["id"]) for det in preview_detections]
     if preview_ids:
@@ -39,10 +48,15 @@ if track_mode == "Track Specific ID":
     else:
         track_id = st.sidebar.text_input("Target ID (show ID preview first)")
 
+# Video source selection
 video_source = st.sidebar.radio("Video source", ["Choose sideline video", "Upload video"])
 
 
 def find_sideline_videos_dir():
+    """
+    Find the directory containing sideline videos by checking multiple possible paths.
+    This handles different environments (local, Colab, etc.) and directory structures.
+    """
     app_dir = os.path.dirname(os.path.abspath(__file__))
     cwd = os.getcwd()
     candidates = [
@@ -109,6 +123,12 @@ run_tracking = st.sidebar.button("Run video tracking")
 
 
 def create_tracker():
+    """
+    Create and configure an OpenCV CSRT tracker for object tracking.
+    CSRT (Channel and Spatial Reliability Tracking) is robust for tracking objects
+    in video sequences, especially in sports analytics where objects may change
+    appearance due to motion, lighting, or occlusion.
+    """
     try:
         return cv2.TrackerCSRT_create()
     except AttributeError:
@@ -116,6 +136,17 @@ def create_tracker():
 
 
 def get_frame(video_path, frame_index=0):
+    """
+    Extract a specific frame from a video file.
+    This is used to get the first frame for preview and detection purposes.
+
+    Args:
+        video_path (str): Path to the video file
+        frame_index (int): Frame number to extract (0-based)
+
+    Returns:
+        numpy.ndarray: The extracted frame as a BGR image, or None if failed
+    """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         return None
@@ -128,6 +159,14 @@ def get_frame(video_path, frame_index=0):
 
 
 def get_image_coordinates_component():
+    """
+    Dynamically import and install the streamlit-image-coordinates component.
+    This component allows users to click on images to get pixel coordinates,
+    which is used for field calibration to estimate yards and MPH.
+
+    Returns:
+        function: The streamlit_image_coordinates function, or None if unavailable
+    """
     try:
         from streamlit_image_coordinates import streamlit_image_coordinates
         return streamlit_image_coordinates
@@ -146,6 +185,16 @@ def get_image_coordinates_component():
 
 
 def show_field_calibration(video_path, known_yards):
+    """
+    Display an interactive field calibration interface.
+    Users click two points on the field that are a known distance apart
+    (like yard lines) to establish a pixel-to-yard conversion ratio.
+    This enables estimating yards traveled and MPH calculations.
+
+    Args:
+        video_path (str): Path to the video file for calibration
+        known_yards (float): Known distance in yards between calibration points
+    """
     with st.expander("Field Calibration for Estimated Yards/MPH", expanded=False):
         st.caption(
             "Click two points on the frame that are a known distance apart, such as adjacent yard lines. "
@@ -217,6 +266,17 @@ def show_field_calibration(video_path, known_yards):
 
 
 def get_class_colors(detections):
+    """
+    Generate consistent colors for different detection classes.
+    Each unique class gets assigned a color from a predefined palette
+    to make visualizations consistent across frames.
+
+    Args:
+        detections (list): List of detection dictionaries with 'class' keys
+
+    Returns:
+        dict: Mapping of class names to BGR color tuples
+    """
     class_colors = {}
     palette = [
         (255, 0, 0), (0, 255, 0), (0, 0, 255),
@@ -230,6 +290,18 @@ def get_class_colors(detections):
 
 
 def annotate_detections(frame, detections):
+    """
+    Draw bounding boxes and labels on a frame for detected objects.
+    Each detection gets a colored rectangle and text label showing
+    the class, ID, and confidence score.
+
+    Args:
+        frame (numpy.ndarray): The image frame to annotate
+        detections (list): List of detection dictionaries with bbox, class, id, conf
+
+    Returns:
+        tuple: (annotated_frame, class_colors_dict) - the annotated frame and color mapping
+    """
     display = frame.copy()
     class_colors = get_class_colors(detections)
     for det in detections:
@@ -243,6 +315,17 @@ def annotate_detections(frame, detections):
 
 
 def build_detections(results, min_conf):
+    """
+    Parse Roboflow inference results into a standardized detection format.
+    Filters detections by confidence and minimum bounding box area.
+
+    Args:
+        results (dict): Raw inference results from Roboflow API
+        min_conf (float): Minimum confidence threshold (0-1)
+
+    Returns:
+        list: List of detection dictionaries with standardized format
+    """
     detections = []
     for i, pred in enumerate(results.get("predictions", [])):
         confidence = float(pred.get("confidence", 0))
@@ -266,6 +349,16 @@ def build_detections(results, min_conf):
 
 
 def load_model(api_key):
+    """
+    Load the Roboflow model for player detection.
+    Initializes the Roboflow API client and loads the specified model version.
+
+    Args:
+        api_key (str): Roboflow API key for authentication
+
+    Returns:
+        Roboflow model object: Ready-to-use inference model
+    """
     rf = Roboflow(api_key=api_key)
     project = rf.workspace(ROBOFLOW_WORKSPACE).project(ROBOFLOW_PROJECT)
     model = project.version(ROBOFLOW_VERSION).model
@@ -273,6 +366,18 @@ def load_model(api_key):
 
 
 def predict_frame(model, frame, confidence_threshold):
+    """
+    Run inference on a single frame using the Roboflow model.
+    Temporarily saves the frame as an image file for the API call.
+
+    Args:
+        model: Roboflow model object
+        frame (numpy.ndarray): OpenCV frame to analyze
+        confidence_threshold (float): Minimum confidence for detections (0-1)
+
+    Returns:
+        dict: JSON response from Roboflow API with predictions
+    """
     frame_path = tempfile.mktemp(suffix=".jpg")
     cv2.imwrite(frame_path, frame)
     try:
@@ -287,6 +392,19 @@ def predict_frame(model, frame, confidence_threshold):
 
 
 def select_target(detections, track_mode, track_id):
+    """
+    Select which detected object to track based on the tracking mode.
+    For QB tracking, selects the highest confidence QB detection.
+    For specific ID tracking, finds the detection with the matching ID.
+
+    Args:
+        detections (list): List of detection dictionaries
+        track_mode (str): Either "Track QB" or "Track Specific ID"
+        track_id (str): Target ID for specific tracking mode
+
+    Returns:
+        dict or None: The selected detection to track, or None if not found
+    """
     if track_mode == "Track QB":
         qb_candidates = [d for d in detections if d["class"].lower() == "qb"]
         return max(qb_candidates, key=lambda d: d["conf"]) if qb_candidates else None
@@ -298,6 +416,16 @@ def select_target(detections, track_mode, track_id):
 
 
 def show_preview_for_choice(model, video_path, track_mode, confidence_threshold):
+    """
+    Display a preview of the first frame with detections to help users choose tracking targets.
+    Shows annotated image and detection table, with different displays based on tracking mode.
+
+    Args:
+        model: Roboflow model for inference
+        video_path (str): Path to the video file
+        track_mode (str): Current tracking mode ("Track QB" or "Track Specific ID")
+        confidence_threshold (float): Minimum confidence for detections
+    """
     frame = get_frame(video_path, frame_index=0)
     if frame is None:
         st.error("Could not open video file or read frame.")
@@ -318,6 +446,14 @@ def show_preview_for_choice(model, video_path, track_mode, confidence_threshold)
 
 
 def show_detected_table(detections, show_ids=False):
+    """
+    Display a table of detected objects with their properties.
+    Shows different information based on whether IDs are needed for selection.
+
+    Args:
+        detections (list): List of detection dictionaries
+        show_ids (bool): Whether to show IDs for selection (affects display format)
+    """
     if not detections:
         st.warning("No detections found on the preview frame.")
         return
@@ -350,6 +486,19 @@ def show_detected_table(detections, show_ids=False):
 
 
 def draw_target(frame, target, bbox=None, class_colors=None):
+    """
+    Draw a highlighted bounding box around the tracking target.
+    Uses thicker lines and larger text to distinguish the tracked object.
+
+    Args:
+        frame (numpy.ndarray): Frame to draw on
+        target (dict): Target detection dictionary
+        bbox (tuple): Optional custom bounding box coordinates
+        class_colors (dict): Optional color mapping for classes
+
+    Returns:
+        numpy.ndarray: Frame with target highlighted
+    """
     x, y, w, h = [int(v) for v in (bbox or target["bbox"])]
     if class_colors is None:
         class_colors = get_class_colors([target])
@@ -361,6 +510,13 @@ def draw_target(frame, target, bbox=None, class_colors=None):
 
 
 def get_ffmpeg_exe():
+    """
+    Find the FFmpeg executable for video processing.
+    Tries system PATH first, then imageio-ffmpeg package.
+
+    Returns:
+        str or None: Path to FFmpeg executable, or None if not found
+    """
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg:
         return ffmpeg
@@ -382,6 +538,16 @@ def get_ffmpeg_exe():
 
 
 def browser_ready_video(input_path):
+    """
+    Convert video to browser-compatible MP4 format for inline playback.
+    Uses FFmpeg to re-encode with H.264 codec and faststart flags for web streaming.
+
+    Args:
+        input_path (str): Path to input video file
+
+    Returns:
+        str: Path to converted video file, or original path if conversion fails
+    """
     ffmpeg = get_ffmpeg_exe()
     if not ffmpeg:
         return input_path
@@ -408,6 +574,21 @@ def browser_ready_video(input_path):
 
 
 def build_tracking_metadata(positions, tracking_lost_frames, total_frames, fps, target, pixels_per_yard):
+    """
+    Calculate and compile tracking analytics and metadata.
+    Computes distance traveled, speed metrics, and converts to real-world units if calibrated.
+
+    Args:
+        positions (list): List of (frame, x, y) position tuples
+        tracking_lost_frames (list): Frames where tracking was lost
+        total_frames (int): Total number of frames in video
+        fps (float): Frames per second of the video
+        target (dict): Target detection information
+        pixels_per_yard (float): Pixels per yard conversion factor, or None
+
+    Returns:
+        dict: Dictionary containing tracking statistics and metadata
+    """
     df = pd.DataFrame(positions)
     target_label = f"ID:{target['id']} {target['class']}"
     has_calibration = pixels_per_yard is not None and pixels_per_yard > 0
