@@ -958,7 +958,7 @@ st.markdown("""
 ## Instructions
 1. The app uses a saved Roboflow API key by default.
 2. Upload a video or choose one from sideline videos.
-3. Click "Show labeled preview" to see position labels for QB mode or ID labels for specific ID mode.
+3. Click "Show labeled preview" to see position labels and ID labels.
 4. Select "Track QB" or "Track Specific ID".
 5. If using specific ID, type the ID shown in the Detected players list.
 6. Use field calibration if you want rough yards/MPH estimates.
