@@ -452,7 +452,7 @@ def show_preview_for_choice(model, video_path, track_mode, confidence_threshold)
         st.download_button(
             "Save labeled image",
             data=png_bytes,
-            file_name="tommy_labeled_preview.png",
+            file_name="labeled_preview.png",
             mime="image/png",
         )
     show_detected_table(detections, show_ids=show_ids)
@@ -775,7 +775,7 @@ if api_key and video_path:
                 st.download_button(
                     "Save labeled image",
                     data=png_bytes,
-                    file_name="tommy_labeled_preview.png",
+                    file_name="labeled_preview.png",
                     mime="image/png",
                 )
             show_detected_table(detections, show_ids=show_ids)
@@ -904,7 +904,7 @@ if api_key and video_path:
                                 st.download_button(
                                     "Save tracked video",
                                     data=video_bytes,
-                                    file_name="tommy_tracked_video.mp4",
+                                    file_name="tracked_video.mp4",
                                     mime="video/mp4",
                                 )
 
@@ -939,14 +939,14 @@ if api_key and video_path:
                                 st.download_button(
                                     "Save tracking data CSV",
                                     data=metadata_df.to_csv(index=False).encode("utf-8"),
-                                    file_name=f"tommy_tracking_id_{target['id']}_metadata.csv",
+                                    file_name=f"tracking_id_{target['id']}_metadata.csv",
                                     mime="text/csv",
                                 )
                                 if not lost_tracking_df.empty:
                                     st.download_button(
                                         "Save lost tracking frames CSV",
                                         data=lost_tracking_df.to_csv(index=False).encode("utf-8"),
-                                        file_name=f"tommy_tracking_id_{target['id']}_lost_frames.csv",
+                                        file_name=f"tracking_id_{target['id']}_lost_frames.csv",
                                         mime="text/csv",
                                     )
                                 st.success("Video tracking completed!")
@@ -956,7 +956,7 @@ else:
 
 st.markdown("""
 ## Instructions
-1. The app uses Tommy's saved Roboflow API key by default.
+1. The app uses a saved Roboflow API key by default.
 2. Upload a video or choose one from sideline videos.
 3. Click "Show labeled preview" to see position labels for QB mode or ID labels for specific ID mode.
 4. Select "Track QB" or "Track Specific ID".
