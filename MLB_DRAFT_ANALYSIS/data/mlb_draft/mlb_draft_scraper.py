@@ -2,6 +2,7 @@
 Scrape MiLB draft prospect rankings by year and extract scouting grades.
 
 This targets pages like:
+https://www.mlb.com/milb/prospects/draft/
 https://www.mlb.com/milb/prospects/2025/draft/
 """
 
@@ -19,7 +20,9 @@ import pandas as pd
 import requests
 
 
-BASE_URL = "https://www.mlb.com/milb/prospects/{year}/draft/"
+CURRENT_DRAFT_YEAR = 2026
+CURRENT_DRAFT_URL = "https://www.mlb.com/milb/prospects/draft/"
+ARCHIVE_BASE_URL = "https://www.mlb.com/milb/prospects/{year}/draft/"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -27,8 +30,21 @@ USER_AGENT = (
 )
 
 
+def draft_url(year: int) -> str:
+    if year >= CURRENT_DRAFT_YEAR:
+        return CURRENT_DRAFT_URL
+    return ARCHIVE_BASE_URL.format(year=year)
+
+
+def player_profile_url(year: int, name_slug: str | None) -> str | None:
+    if not name_slug:
+        return None
+    base_url = CURRENT_DRAFT_URL if year >= CURRENT_DRAFT_YEAR else ARCHIVE_BASE_URL.format(year=year)
+    return f"{base_url.rstrip('/')}/{name_slug}"
+
+
 def fetch_html(year: int, session: requests.Session) -> str:
-    url = BASE_URL.format(year=year)
+    url = draft_url(year)
     try:
         response = session.get(url, timeout=30)
         response.raise_for_status()
@@ -118,21 +134,54 @@ def unescape_page(html_text: str) -> str:
     return html.unescape(html_text)
 
 
-def extract_rankings(html_text: str, year: int) -> list[dict[str, Any]]:
-    unescaped = unescape_page(html_text)
-    candidate_keys = [
-        f'"getPlayerRankingsFromSelection({{\\"limit\\":100,\\"skip\\":0,\\"slug\\":\\"sel-pr-{year}-draft\\"}})"',
-        f'"getPlayerRankingsFromSelection({{"limit":100,"skip":0,"slug":"sel-pr-{year}-draft"}})"',
-        f'"getPlayerRankingsFromSelection({{\\"limit\\":100,\\"slug\\":\\"sel-pr-{year}-draft\\"}})"',
-        f'"getPlayerRankingsFromSelection({{"limit":100,"slug":"sel-pr-{year}-draft"}})"',
+def ranking_payload_keys(year: int, limit: int, skip: int | None) -> list[str]:
+    if skip is None:
+        return [
+            f'"getPlayerRankingsFromSelection({{\\"limit\\":{limit},\\"slug\\":\\"sel-pr-{year}-draft\\"}})"',
+            f'"getPlayerRankingsFromSelection({{"limit":{limit},"slug":"sel-pr-{year}-draft"}})"',
+        ]
+
+    return [
+        f'"getPlayerRankingsFromSelection({{\\"limit\\":{limit},\\"skip\\":{skip},\\"slug\\":\\"sel-pr-{year}-draft\\"}})"',
+        f'"getPlayerRankingsFromSelection({{"limit":{limit},"skip":{skip},"slug":"sel-pr-{year}-draft"}})"',
     ]
 
-    for key in candidate_keys:
-        try:
-            array_text = extract_json_segment(unescaped, key, "[")
-            return json.loads(array_text)
-        except (ValueError, json.JSONDecodeError):
-            continue
+
+def extract_rankings(html_text: str, year: int) -> list[dict[str, Any]]:
+    unescaped = unescape_page(html_text)
+    payload_specs = [
+        (100, 0),
+        (100, 100),
+        (100, 200),
+        (50, 200),
+        (300, 0),
+        (250, 0),
+        (200, 0),
+        (150, 0),
+        (100, None),
+    ]
+    rankings: list[dict[str, Any]] = []
+    seen: set[tuple[Any, Any]] = set()
+
+    for limit, skip in payload_specs:
+        for key in ranking_payload_keys(year, limit, skip):
+            try:
+                array_text = extract_json_segment(unescaped, key, "[")
+                page_rankings = json.loads(array_text)
+            except (ValueError, json.JSONDecodeError):
+                continue
+
+            for item in page_rankings:
+                player_ref = (((item.get("playerEntity") or {}).get("player") or {}).get("__ref"))
+                unique_key = (item.get("rank"), player_ref)
+                if unique_key in seen:
+                    continue
+                rankings.append(item)
+                seen.add(unique_key)
+            break
+
+    if rankings:
+        return sorted(rankings, key=lambda item: (item.get("rank") is None, item.get("rank") or 0))
 
     raise ValueError(f"Could not extract draft rankings payload for {year}.")
 
@@ -305,11 +354,7 @@ def build_year_dataframe(year: int, html_text: str) -> pd.DataFrame:
             "player_id": person.get("id"),
             "player_name": " ".join(part for part in [person.get("useName"), person.get("useLastName")] if part) or None,
             "name_slug": person.get("nameSlug"),
-            "profile_url": (
-                f"https://www.mlb.com/milb/prospects/{year}/draft/{person.get('nameSlug')}"
-                if person.get("nameSlug")
-                else None
-            ),
+            "profile_url": player_profile_url(year, person.get("nameSlug")),
             "position": player_entity.get("position") or ((person.get("primaryPosition") or {}).get("abbreviation")),
             "school": row_meta.get("school") or get_school_from_person(person),
             "current_team": team.get("name"),
@@ -370,11 +415,11 @@ def scrape_all_years(start_year: int = 2015, end_year: int = 2026) -> tuple[dict
     return year_frames, combined
 
 
-def save_outputs(year_frames: dict[int, pd.DataFrame], combined: pd.DataFrame, outdir: Path) -> None:
+def save_outputs(combined: pd.DataFrame, outdir: Path) -> Path:
     outdir.mkdir(parents=True, exist_ok=True)
-    combined.to_csv(outdir / "mlb_draft_rankings_all_years.csv", index=False)
-    for year, frame in year_frames.items():
-        frame.to_csv(outdir / f"mlb_draft_rankings_{year}.csv", index=False)
+    output_path = outdir / "mlb_draft_rankings_master.csv"
+    combined.to_csv(output_path, index=False)
+    return output_path
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -388,10 +433,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     year_frames, combined = scrape_all_years(args.start_year, args.end_year)
-    save_outputs(year_frames, combined, args.outdir)
+    output_path = save_outputs(combined, args.outdir)
 
     years = sorted(year_frames)
-    print(f"Saved {len(years)} yearly files plus one combined file to: {args.outdir}")
+    print(f"Saved master CSV to: {output_path}")
     print(f"Years scraped: {years[0]}-{years[-1]}")
     print(f"Combined rows: {len(combined):,}")
 
