@@ -33,8 +33,16 @@ def quadrant_chart(df, y_col, y_title, top_n=12):
         base
         .mark_circle(size=70, opacity=0.78)
         .encode(
-            x=alt.X("weight_lbs:Q", title="Weight"),
-            y=alt.Y(f"{y_col}:Q", title=y_title),
+            x=alt.X(
+                "weight_lbs:Q",
+                title="Weight",
+                scale=alt.Scale(zero=False, nice=True, padding=20),
+            ),
+            y=alt.Y(
+                f"{y_col}:Q",
+                title=y_title,
+                scale=alt.Scale(zero=False, nice=True, padding=20),
+            ),
             color=alt.condition(
                 alt.datum.is_dominic,
                 alt.value("#d62728"),
@@ -63,7 +71,7 @@ def quadrant_chart(df, y_col, y_title, top_n=12):
         y=f"{y_col}:Q",
     )
 
-    return (points + trend + vertical + horizontal + labels).properties(height=560)
+    return (points + trend + vertical + horizontal + labels).properties(width="container", height=560)
 
 
 def overall_chart(df):
@@ -81,8 +89,17 @@ def overall_chart(df):
         base
         .mark_circle(size=70, opacity=0.78)
         .encode(
-            x=alt.X("rank:Q", title="PBR Rank", sort="ascending"),
-            y=alt.Y("overall_score:Q", title="Overall Score"),
+            x=alt.X(
+                "rank:Q",
+                title="PBR Rank",
+                sort="ascending",
+                scale=alt.Scale(zero=False, nice=True, padding=20),
+            ),
+            y=alt.Y(
+                "overall_score:Q",
+                title="Overall Score",
+                scale=alt.Scale(zero=False, nice=True, padding=20),
+            ),
             color=alt.condition(alt.datum.is_dominic, alt.value("#d62728"), alt.value("#2563eb")),
             tooltip=[
                 "player_name",
@@ -106,7 +123,7 @@ def overall_chart(df):
     y_mid = float(source["overall_score"].median())
     vertical = alt.Chart(pd.DataFrame({"x": [x_mid]})).mark_rule(color="#555", strokeDash=[5, 5]).encode(x="x:Q")
     horizontal = alt.Chart(pd.DataFrame({"y": [y_mid]})).mark_rule(color="#555", strokeDash=[5, 5]).encode(y="y:Q")
-    return (points + trend + vertical + horizontal + labels).properties(height=560)
+    return (points + trend + vertical + horizontal + labels).properties(width="container", height=560)
 
 
 with st.sidebar:
