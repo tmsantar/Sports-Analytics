@@ -19,10 +19,8 @@ metric_cols[3].metric("Players With Grades", f"{mlb_df.dropna(subset=GRADE_COLUM
 
 st.markdown("---")
 
-left, right = st.columns([1.1, 1])
-with left:
-    st.markdown("### Start Here")
-    st.markdown(
+st.markdown("### Start Here")
+st.markdown(
         """
         Use the sidebar to move through the app.
 
@@ -33,20 +31,3 @@ with left:
         **Draft Board Data** lets you filter, inspect, and export the combined master CSV.
         """
     )
-
-with right:
-    st.markdown("### Dominic Santarelli Snapshot")
-    dom = mlb_df[mlb_df["player_name"].astype(str).str.contains("Dominic Santarelli", case=False, na=False)]
-    if dom.empty:
-        st.warning("Dominic Santarelli was not found in the MLB master CSV. Regenerate the scraper output first.")
-    else:
-        row = dom.iloc[0]
-        st.markdown(f"#### {row['player_name']} | {row['position']}")
-        st.markdown(f"Rank {row['rank']} | {row['height']} | {row['weight']} lbs | B/T {row['bats']}/{row['throws']}")
-        st.markdown(
-            f"Grades: Hit {row['hit']} | Power {row['power']} | Run {row['run']} | "
-            f"Arm {row['arm']} | Field {row['field']} | Overall {row['overall']}"
-        )
-        image_url = row.get("profile_image_url")
-        if image_url:
-            st.image(image_url, width=240)
